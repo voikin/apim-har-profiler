@@ -1,0 +1,23 @@
+logger:
+  level: info
+  pretty: true
+
+server:
+  grpc:
+    host: "0.0.0.0"
+    port: 50051
+    max_conn_age_seconds: 7200   # 2 часа
+  http:
+    host: "0.0.0.0"
+    port: 8080
+    read_timeout_seconds: 15
+    write_timeout_seconds: 15
+    read_header_timeout_seconds: 15
+
+postgres:
+  dsn: "user=postgres password=postgres host=localhost port=5432 dbname=apim sslmode=disable"
+
+neo4j:
+  uri: "neo4j://localhost:7687"
+  username: "neo4j"
+  password: "P@ssw0rd"
