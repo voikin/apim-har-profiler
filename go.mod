@@ -9,10 +9,12 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/voikin/apim-proto/gen/go v0.1.3
 	google.golang.org/grpc v1.71.1
+	github.com/google/uuid v1.6.0
 )
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.6-20250307204501-0409229c3780.1 // indirect
+	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect

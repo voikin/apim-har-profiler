@@ -19,7 +19,7 @@ import (
 	"github.com/voikin/apim-har-profiler/internal/config"
 	controller_pkg "github.com/voikin/apim-har-profiler/internal/controller"
 	"github.com/voikin/apim-har-profiler/pkg/logger"
-	profilestorepb "github.com/voikin/apim-proto/gen/go/apim_har_profiler/v1"
+	harprofilerpb "github.com/voikin/apim-proto/gen/go/apim_har_profiler/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -72,7 +72,7 @@ func main() {
 	logger.Logger.Info().Msg("Server exited gracefully")
 }
 
-func runGRPCServer(cfg *config.GRPC, controller profilestorepb.HARProfilerServiceServer) *grpc.Server {
+func runGRPCServer(cfg *config.GRPC, controller harprofilerpb.HARProfilerServiceServer) *grpc.Server {
 	grpcAddr := fmt.Sprintf(":%d", cfg.Port)
 
 	loggableEvents := []logging.LoggableEvent{
@@ -94,7 +94,7 @@ func runGRPCServer(cfg *config.GRPC, controller profilestorepb.HARProfilerServic
 		grpc.ConnectionTimeout(cfg.MaxConnectionAge()),
 	)
 
-	profilestorepb.RegisterHARProfilerServiceServer(grpcServer, controller)
+	harprofilerpb.RegisterHARProfilerServiceServer(grpcServer, controller)
 
 	listener, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
@@ -117,7 +117,7 @@ func runHTTPServer(ctx context.Context, cfg *config.HTTP, grpcAddr string) *http
 
 	gwMux := runtime.NewServeMux()
 	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	if err := profilestorepb.RegisterHARProfilerServiceHandlerFromEndpoint(ctx, gwMux, grpcAddr, dialOpts); err != nil {
+	if err := harprofilerpb.RegisterHARProfilerServiceHandlerFromEndpoint(ctx, gwMux, grpcAddr, dialOpts); err != nil {
 		logger.Logger.Fatal().Err(err).Msg("failed to register gRPC-Gateway")
 	}
 
