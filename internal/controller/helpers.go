@@ -18,6 +18,9 @@ type harEntry struct {
 				Method string `json:"method"`
 				URL    string `json:"url"`
 			} `json:"request"`
+			Response struct {
+				Status int `json:"status"`
+			} `json:"response"`
 		} `json:"entries"`
 	} `json:"log"`
 }
@@ -53,6 +56,11 @@ func isInteger(s string) bool {
 	return matched
 }
 
+type opKey struct {
+	Method    string
+	SegmentID string
+}
+
 func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 	var har harEntry
 	if err := json.Unmarshal([]byte(harJSON), &har); err != nil {
@@ -65,7 +73,7 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 
 	var segments []*shared.PathSegment
 	var edges []*shared.Edge
-	var operations []*shared.Operation
+	statusMap := map[opKey]map[int]struct{}{}
 
 	for _, entry := range har.Log.Entries {
 		method := entry.Request.Method
@@ -75,6 +83,7 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 		}
 
 		var prevSegmentID string
+		var lastSegmentID string
 
 		for i, seg := range pathSegs {
 			isParam := isUUID(seg) || isInteger(seg)
@@ -135,16 +144,29 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 				})
 			}
 			prevSegmentID = segmentID
-
-			if i == len(pathSegs)-1 {
-				opID := fmt.Sprintf("op-%s-%s", strings.ToLower(method), segmentID)
-				operations = append(operations, &shared.Operation{
-					Id:            opID,
-					Method:        method,
-					PathSegmentId: segmentID,
-				})
-			}
+			lastSegmentID = segmentID
 		}
+
+		opK := opKey{Method: method, SegmentID: lastSegmentID}
+		if _, ok := statusMap[opK]; !ok {
+			statusMap[opK] = map[int]struct{}{}
+		}
+		statusMap[opK][entry.Response.Status] = struct{}{}
+	}
+
+	var operations []*shared.Operation
+	for key, statuses := range statusMap {
+		var codes []int32
+		for code := range statuses {
+			codes = append(codes, int32(code))
+		}
+		opID := fmt.Sprintf("op-%s-%s", strings.ToLower(key.Method), key.SegmentID)
+		operations = append(operations, &shared.Operation{
+			Id:            opID,
+			Method:        key.Method,
+			PathSegmentId: key.SegmentID,
+			StatusCodes:   codes,
+		})
 	}
 
 	return &shared.APIGraph{

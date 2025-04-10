@@ -3,13 +3,13 @@ module github.com/voikin/apim-har-profiler
 go 1.23.5
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.1
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.20.1
-	github.com/voikin/apim-proto/gen/go v0.1.3
+	github.com/voikin/apim-proto/gen/go v0.1.5
 	google.golang.org/grpc v1.71.1
-	github.com/google/uuid v1.6.0
 )
 
 require (
