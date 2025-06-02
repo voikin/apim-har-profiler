@@ -154,6 +154,8 @@ func runHTTPServer(ctx context.Context, cfg *config.HTTP, grpcAddr string) *http
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout(),
 	}
 
+	httpServer.Handler = CORSMiddleware(httpServer.Handler)
+
 	go func() {
 		logger.Logger.Info().Int("port", cfg.Port).Msg("HTTP server listening")
 		err := httpServer.ListenAndServe()
@@ -163,4 +165,19 @@ func runHTTPServer(ctx context.Context, cfg *config.HTTP, grpcAddr string) *http
 	}()
 
 	return httpServer
+}
+
+func CORSMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
