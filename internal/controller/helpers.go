@@ -28,7 +28,7 @@ type harEntry struct {
 func extractPathSegments(rawURL string) ([]string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("url.Parse: %w", err)
 	}
 	path := u.Path
 	segments := strings.Split(strings.Trim(path, "/"), "/")
@@ -73,7 +73,7 @@ type opKey struct {
 	Path   string
 }
 
-func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
+func parseHARtoGraph(harJSON string, isSequence bool) (*shared.APIGraph, error) {
 	var har harEntry
 	if err := json.Unmarshal([]byte(harJSON), &har); err != nil {
 		return nil, fmt.Errorf("failed to parse HAR: %w", err)
@@ -82,13 +82,12 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 	segmentMap := map[string]string{}
 	paramMap := map[string]string{}
 	pathToSegmentID := map[string]string{}
-	edgeSet := map[string]bool{} // for deduplication
+	edgeSet := map[string]bool{}
 
-	idCounter := 1
 	var segments []*shared.PathSegment
 	var edges []*shared.Edge
 	statusMap := map[opKey]map[int]struct{}{}
-	pathMap := map[opKey]string{} // full path for debug
+	opKeyToOpID := map[opKey]string{}
 
 	for _, entry := range har.Log.Entries {
 		method := entry.Request.Method
@@ -101,22 +100,23 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 		var segmentIDs []string
 
 		for i, seg := range pathSegs {
+			pathPrefix := pathSegs[:i+1]
 			isParam := isUUID(seg) || isInteger(seg)
-			var segmentID string
+			var segmentID, segmentKey string
 
 			if isParam {
+				pathPrefix[len(pathPrefix)-1] = "{param}"
 				paramType := guessParamType(seg)
-				paramKey := fmt.Sprintf("param-%s-%d", normalizePath(pathSegs[:i]), paramType)
-
-				if existingID, ok := paramMap[paramKey]; ok {
+				segmentKey = fmt.Sprintf("param::%s::%d", strings.Join(pathPrefix, "/"), paramType)
+				if existingID, ok := paramMap[segmentKey]; ok {
 					segmentID = existingID
 				} else {
-					segmentID = fmt.Sprintf("param-%d", idCounter)
-					paramName := "{param}"
+					segmentID = segmentKey
+					paramName := "param"
 					if paramType == shared.ParameterType_PARAMETER_TYPE_UUID {
-						paramName = "{uuid}"
+						paramName = "uuid"
 					} else if paramType == shared.ParameterType_PARAMETER_TYPE_INTEGER {
-						paramName = "{int}"
+						paramName = "int"
 					}
 
 					segments = append(segments, &shared.PathSegment{
@@ -129,15 +129,14 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 							},
 						},
 					})
-					paramMap[paramKey] = segmentID
-					idCounter++
+					paramMap[segmentKey] = segmentID
 				}
 			} else {
-				staticKey := fmt.Sprintf("static-%s-%d", seg, i)
-				if existingID, ok := segmentMap[staticKey]; ok {
+				segmentKey = fmt.Sprintf("static::%s", strings.Join(pathPrefix, "/"))
+				if existingID, ok := segmentMap[segmentKey]; ok {
 					segmentID = existingID
 				} else {
-					segmentID = fmt.Sprintf("static-%d", idCounter)
+					segmentID = segmentKey
 					segments = append(segments, &shared.PathSegment{
 						Segment: &shared.PathSegment_Static{
 							Static: &shared.StaticSegment{
@@ -146,13 +145,12 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 							},
 						},
 					})
-					segmentMap[staticKey] = segmentID
-					idCounter++
+					segmentMap[segmentKey] = segmentID
 				}
 			}
 
 			if i > 0 {
-				edgeKey := fmt.Sprintf("%s-%s", prevSegmentID, segmentID)
+				edgeKey := fmt.Sprintf("%s->%s", prevSegmentID, segmentID)
 				if !edgeSet[edgeKey] {
 					edges = append(edges, &shared.Edge{
 						From: prevSegmentID,
@@ -168,7 +166,6 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 		normalized := normalizePath(pathSegs)
 		lastSegmentID := segmentIDs[len(segmentIDs)-1]
 
-		// сохраняем только если еще нет
 		if _, exists := pathToSegmentID[normalized]; !exists {
 			pathToSegmentID[normalized] = lastSegmentID
 		}
@@ -181,7 +178,6 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 			statusMap[key] = map[int]struct{}{}
 		}
 		statusMap[key][entry.Response.Status] = struct{}{}
-		pathMap[key] = strings.Join(pathSegs, "/")
 	}
 
 	var operations []*shared.Operation
@@ -191,20 +187,57 @@ func parseHARtoGraph(harJSON string) (*shared.APIGraph, error) {
 			codes = append(codes, int32(code))
 		}
 		segmentID := pathToSegmentID[key.Path]
-		opID := fmt.Sprintf("op-%s-%s", strings.ToLower(key.Method), strings.ReplaceAll(key.Path, "/", "-"))
+		opID := fmt.Sprintf("op::%s::%s", strings.ToLower(key.Method), segmentID)
 
 		operations = append(operations, &shared.Operation{
 			Id:            opID,
 			Method:        key.Method,
 			PathSegmentId: segmentID,
 			StatusCodes:   codes,
-			// fullPath можно добавить как кастомное поле в protobuf при необходимости
 		})
+		opKeyToOpID[key] = opID
+	}
+
+	var transitions []*shared.Transition
+	if isSequence {
+		transitions = buildTransitions(&har, opKeyToOpID)
 	}
 
 	return &shared.APIGraph{
-		Segments:   segments,
-		Edges:      edges,
-		Operations: operations,
+		Segments:    segments,
+		Edges:       edges,
+		Operations:  operations,
+		Transitions: transitions,
 	}, nil
+}
+
+
+func buildTransitions(har *harEntry, opKeyToOpID map[opKey]string) []*shared.Transition {
+	var transitions []*shared.Transition
+	var prevOpID string
+
+	for _, entry := range har.Log.Entries {
+		method := entry.Request.Method
+		urlPath, err := extractPathSegments(entry.Request.URL)
+		if err != nil || len(urlPath) == 0 {
+			continue
+		}
+		normalized := normalizePath(urlPath)
+		key := opKey{Method: method, Path: normalized}
+
+		opID, ok := opKeyToOpID[key]
+		if !ok {
+			continue
+		}
+
+		if prevOpID != "" {
+			transitions = append(transitions, &shared.Transition{
+				From: prevOpID,
+				To:   opID,
+			})
+		}
+		prevOpID = opID
+	}
+
+	return transitions
 }
